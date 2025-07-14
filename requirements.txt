@@ -4,3 +4,4 @@ gspread
 oauth2client
 beautifulsoup4
 lxml
+tqdm
