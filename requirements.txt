@@ -1,0 +1,6 @@
+selenium
+webdriver-manager
+gspread
+oauth2client
+beautifulsoup4
+lxml
