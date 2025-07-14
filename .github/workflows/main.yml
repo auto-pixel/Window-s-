@@ -1,64 +1,130 @@
-name: windows 
+name: windows
 
-# ─────── Triggers ────────────────────────────────────────────────
-#  • Manual run via “Run workflow” button
 on:
   schedule:
-    - cron: '30 13 * * *'  # Run daily at 10:30 AM UTC (4:00 PM Indian time - UTC+5:30)
-  workflow_dispatch:
-# ─────── Job definition ─────────────────────────────────────────
+    - cron: '30 14 * * *'  # Run daily at 10:30 AM UTC (4:00 PM Indian time - UTC+5:30)
+  workflow_dispatch:     # Allow manual triggering
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
-
-    # Path to creds file the script expects
-    env:
-      GOOGLE_CREDS: ${{ github.workspace }}/credentials.json
-
+    timeout-minutes: 1200  # 20 hours timeout for long-running tasks
+    
     steps:
-      # 1️⃣  Pull repo
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # 2️⃣  Python toolchain (with pip cache)
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.12.3'
           cache: 'pip'
-
-      # 3️⃣  System packages -- Chromium for Selenium
-      - name: Install OS dependencies (headless Chrome)
+          check-latest: true
+      
+      - name: Install system dependencies
         run: |
+          # Install required system packages for Ubuntu Noble (24.04)
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            chromium-browser \
-            fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 \
-            libatk1.0-0 libcups2 libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 \
-            libnspr4 libnss3 libx11-xcb1 libxdamage1 libxrandr2 xdg-utils
-
-      # 4️⃣  Python libs
+          sudo apt-get install -y wget unzip xvfb libxss1 libxtst6 libnss3 libatk1.0-0 \
+            libcups2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 \
+            libatspi2.0-0 libx11-xcb1 libasound2t64 libatk-bridge2.0-0
+          
+          # Install Chrome
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          
+          # Verify installations
+          echo "Chrome version: $(google-chrome --version)"
+          
+          # Set up virtual display for headless mode
+          sudo Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
+          export DISPLAY=:99
+          
+          # Set Chrome binary location
+          echo "CHROME_PATH=$(which google-chrome)" >> $GITHUB_ENV
+          
+          # Debug info
+          echo "Chrome binary location: $(which google-chrome)"
+          echo "DISPLAY set to: $DISPLAY"
+      
       - name: Install Python dependencies
         run: |
-          pip install --upgrade pip
-          pip install \
-            selenium \
-            webdriver-manager \
-            gspread \
-            google-auth \
-            tqdm \
-            beautifulsoup4
-
-      # 5️⃣  Drop the service-account JSON from a secret
-      - name: Write Google service account credentials
+          python -m pip install --upgrade pip
+          
+          # Install core dependencies first
+          pip install --upgrade setuptools wheel
+          
+          # Install undetected-chromedriver first with specific version
+          pip install "undetected-chromedriver>=3.5.5" --no-cache-dir
+          
+          # Install other requirements
+          pip install -r requirements.txt
+          
+          # Debug info
+          python -c "import undetected_chromedriver as uc; print(f'Undetected ChromeDriver version: {uc.__version__}')"
+      
+      - name: Setup credentials
         run: |
-          echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > credentials.json
+          # Create Google credentials file from GitHub secrets
+          # Single quotes around the secret prevent shell interpretation issues
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+          # Make sure the JSON is properly formatted without any extra characters
+          python -c "
+          import json, sys, os
+          try:
+              # Try to parse the credentials file
+              with open('credentials.json', 'r') as f:
+                  json.load(f)
+              print('✓ Google credentials JSON validated successfully')
+          except json.JSONDecodeError as e:
+              print(f'ERROR: Invalid JSON in credentials file: {e}')
+              print('Checking file content:')
+              with open('credentials.json', 'r') as f:
+                  print(f.read())
+              sys.exit(1)
+          "
+          
+          # Create .env file with Claude API key (no quotes needed)
+          echo CLAUDE_API_KEY=${{ secrets.CLAUDE_API_KEY }} > .env
+          
+          echo "Credentials files created successfully"
+        
+    
 
-      # 6️⃣  Launch the scraper
-      - name: Run windows 
-        run: python gems.py
-
-      # (Optional) 7️⃣  Clean up the creds file so it never lingers
-      - name: Remove credentials
-        if: always()
-        run: rm -f credentials.json
+      - name: Run gems.py
+        env:
+          DISPLAY: ':99'
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          # Set display for headless Chrome
+          export DISPLAY=:99
+          
+          # Verify Chrome is accessible
+          which google-chrome
+          google-chrome --version
+          
+          # Start Xvfb if not already running
+          if ! pgrep -x "Xvfb" > /dev/null; then
+            Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
+            export DISPLAY=:99
+          fi
+          
+          # Set Chrome binary location for undetected-chromedriver
+          export CHROME_PATH=$(which google-chrome)
+          
+          # Debug info
+          echo "Using Chrome binary at: $CHROME_PATH"
+          echo "DISPLAY: $DISPLAY"
+          
+          # Run the script with a longer timeout
+          python master_script.py
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraping-results
+          path: |
+            ads_data.json
+            logs/
