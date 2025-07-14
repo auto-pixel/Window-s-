@@ -1,0 +1,47 @@
+name: Facebook Ads Scraper
+
+on:
+  workflow_dispatch:        # run it manually from the Actions tab
+  schedule:
+    # every day at 03:00 UTC  (≈ 08:30 IST)
+    - cron:  '0 3 * * *'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    env:
+      # the script looks for GOOGLE_CREDS; keep it consistent
+      GOOGLE_CREDS: ${{ github.workspace }}/credentials.json
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install system dependencies (headless Chrome)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          chromium-browser \
+          fonts-liberation libappindicator3-1 libasound2 \
+          libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 \
+          libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 \
+          libx11-xcb1 libxdamage1 libxrandr2 xdg-utils
+
+    - name: Install Python requirements
+      run: |
+        pip install --upgrade pip
+        pip install selenium webdriver-manager gspread google-auth tqdm beautifulsoup4
+
+    - name: Write Google service-account credentials
+      # Multiline secrets work fine – GitHub masks them in logs
+      run: |
+        echo "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" > credentials.json
+
+    - name: Run window
+      run: python gems.py
